@@ -56,6 +56,8 @@ public class CapacitorHealthkitPlugin: CAPPlugin {
             return HKObjectType.categoryType(forIdentifier: HKCategoryTypeIdentifier.sleepAnalysis)!
         case "workoutType":
             return HKWorkoutType.workoutType()
+        case "workoutRoute":
+            return HKSeriesType.workoutRoute()
         case "weight":
             return HKQuantityType.quantityType(forIdentifier: HKQuantityTypeIdentifier.bodyMass)!
         default:
@@ -76,6 +78,7 @@ public class CapacitorHealthkitPlugin: CAPPlugin {
             case "activity":
                 types.insert(HKObjectType.categoryType(forIdentifier: HKCategoryTypeIdentifier.sleepAnalysis)!)
                 types.insert(HKWorkoutType.workoutType())
+                types.insert(HKSeriesType.workoutRoute())
             case "calories":
                 types.insert(HKQuantityType.quantityType(forIdentifier: HKQuantityTypeIdentifier.activeEnergyBurned)!)
                 types.insert(HKQuantityType.quantityType(forIdentifier: HKQuantityTypeIdentifier.basalEnergyBurned)!)
@@ -346,7 +349,7 @@ public class CapacitorHealthkitPlugin: CAPPlugin {
                 let workoutED = sample.endDate as NSDate
                 let workoutInterval = workoutED.timeIntervalSince(workoutSD as Date)
                 let workoutHoursBetweenDates = workoutInterval / 3600
-
+                let workoutRoute =  self.getWorkoutRoute(workout: sample)
                 output.append([
                     "uuid": sample.uuid.uuidString,
                     "startDate": ISO8601DateFormatter().string(from: sample.startDate),
@@ -360,6 +363,7 @@ public class CapacitorHealthkitPlugin: CAPPlugin {
                     "totalDistance": TDData!, // meter
                     "totalFlightsClimbed": TFCData!, // count
                     "totalSwimmingStrokeCount": TSSCData!, // count
+                    "routes":workoutRoute
                 ])
             } else {
                 guard let sample = result as? HKQuantitySample else {
@@ -390,7 +394,7 @@ public class CapacitorHealthkitPlugin: CAPPlugin {
                     print("Error: unknown unit type")
                 }
 
-                var value: Double 
+                var value: Double
                 let quantitySD: NSDate
                 let quantityED: NSDate
                 quantitySD = sample.startDate as NSDate
@@ -414,10 +418,26 @@ public class CapacitorHealthkitPlugin: CAPPlugin {
         return output
     }
 
-    func getDateFromString(inputDate: String) -> Date{
+    func getWorkoutRoute(workout: HKWorkout) -> [HKSample]? {
+
+        
+        let byWorkout = HKQuery.predicateForObjects(from: workout)
+        let limit = HKObjectQueryNoLimit
+        var result :[HKSample]?
+        let sampleType: HKSampleType = HKSeriesType.workoutRoute()
+        let query = HKSampleQuery(sampleType: sampleType, predicate: byWorkout, limit: limit, sortDescriptors: nil) {
+            query, results, error in
+            result =  results!
+        }
+        healthStore.execute(query)
+        print(result)
+        return result
+    }
+
+    func getDateFromString(inputDate: String) -> Date?{
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions =  [.withInternetDateTime, .withFractionalSeconds]
-        return formatter.date(from: inputDate)!
+        return formatter.date(from: inputDate)
     }
 
     
@@ -485,8 +505,11 @@ public class CapacitorHealthkitPlugin: CAPPlugin {
     }
     
     @objc func isAvailable(_ call: CAPPluginCall) {
+        
         if HKHealthStore.isHealthDataAvailable() {
-            return call.resolve()
+            UIApplication.shared.open(URL(string: "x-apple-health://")!)
+            return call.resolve(["available":true])
+            
         } else {
             return call.reject("Health data not available")
         }
@@ -503,7 +526,7 @@ public class CapacitorHealthkitPlugin: CAPPlugin {
         }
 
         if healthStore.authorizationStatus(for: sampleType!) == .sharingAuthorized {
-            return call.resolve()
+            return call.resolve(["authozired":true])
         } else {
             return call.reject("Permission Denied to Access data")
         }
