@@ -1,6 +1,8 @@
 import Foundation
 import Capacitor
 import HealthKit
+import CoreLocation
+
 
 var healthStore = HKHealthStore()
 
@@ -8,6 +10,7 @@ var healthStore = HKHealthStore()
  * Please read the Capacitor iOS Plugin Development Guide
  * here: https://capacitorjs.com/docs/plugins/ios
  */
+@available(iOS 13.0.0, *)
 @objc(CapacitorHealthkitPlugin)
 public class CapacitorHealthkitPlugin: CAPPlugin {
 
@@ -273,7 +276,7 @@ public class CapacitorHealthkitPlugin: CAPPlugin {
         return timeZoneString
     }
 
-    func generateOutput(sampleName: String, results: [HKSample]?) -> [[String: Any]]? {
+    func generateOutput(sampleName: String, results: [HKSample]?) async -> [[String: Any]]? {
         var output: [[String: Any]] = []
         if results == nil {
             return output
@@ -349,7 +352,7 @@ public class CapacitorHealthkitPlugin: CAPPlugin {
                 let workoutED = sample.endDate as NSDate
                 let workoutInterval = workoutED.timeIntervalSince(workoutSD as Date)
                 let workoutHoursBetweenDates = workoutInterval / 3600
-                let workoutRoute =  self.getWorkoutRoute(workout: sample)
+                let workoutRoute = await self.getWorkoutRoute(workout: sample)
                 output.append([
                     "uuid": sample.uuid.uuidString,
                     "startDate": ISO8601DateFormatter().string(from: sample.startDate),
@@ -365,6 +368,8 @@ public class CapacitorHealthkitPlugin: CAPPlugin {
                     "totalSwimmingStrokeCount": TSSCData!, // count
                     "routes":workoutRoute
                 ])
+               
+                
             } else {
                 guard let sample = result as? HKQuantitySample else {
                     return nil
@@ -418,21 +423,69 @@ public class CapacitorHealthkitPlugin: CAPPlugin {
         return output
     }
 
-    func getWorkoutRoute(workout: HKWorkout) -> [HKSample]? {
-
-        
+    func getWorkoutRoute(workout: HKWorkout) async -> [Any]? {
         let byWorkout = HKQuery.predicateForObjects(from: workout)
-        let limit = HKObjectQueryNoLimit
-        var result :[HKSample]?
-        let sampleType: HKSampleType = HKSeriesType.workoutRoute()
-        let query = HKSampleQuery(sampleType: sampleType, predicate: byWorkout, limit: limit, sortDescriptors: nil) {
-            query, results, error in
-            result =  results!
+
+        let samples = try! await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[HKSample], Error>) in
+            healthStore.execute(HKAnchoredObjectQuery(type: HKSeriesType.workoutRoute(), predicate: byWorkout, anchor: nil, limit: HKObjectQueryNoLimit, resultsHandler: { (query, samples, deletedObjects, anchor, error) in
+                if let hasError = error {
+                    continuation.resume(throwing: hasError)
+                    return
+                }
+
+                guard let samples = samples else {
+                    return
+                }
+
+                continuation.resume(returning: samples)
+            }))
         }
-        healthStore.execute(query)
-        print(result)
-        return result
+
+        guard let workouts = samples as? [HKWorkoutRoute] else {
+            return nil
+        }
+
+        var allLocations: [Any] = []
+        for workout in workouts {
+            let location = await getLocationDataForRoute(givenRoute:workout)
+            allLocations.append(location)
+        }
+
+        return allLocations
     }
+
+    func getLocationDataForRoute(givenRoute: HKWorkoutRoute) async -> [[String:Any]] {
+        let locations = try! await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[[String:Any]], Error>) in
+            var allLocations: [[String:Any]] = []
+
+            // Create the route query.
+            let query = HKWorkoutRouteQuery(route: givenRoute) { (query, locationsOrNil, done, errorOrNil) in
+
+                if let error = errorOrNil {
+                    continuation.resume(throwing: error)
+                    return
+                }
+
+                guard let currentLocationBatch = locationsOrNil else {
+                    fatalError("*** Invalid State: This can only fail if there was an error. ***")
+                }
+
+                for currentLocation in currentLocationBatch {
+                     allLocations.append(["latitude": currentLocation.coordinate.latitude, "longitude": currentLocation.coordinate.longitude, "altitude":currentLocation.altitude, "timestamp":ISO8601DateFormatter().string(from: currentLocation.timestamp)])
+                }
+               
+
+                if done {
+                    continuation.resume(returning: allLocations)
+                }
+            }
+
+            healthStore.execute(query)
+        }
+
+        return locations
+    }
+
 
     func getDateFromString(inputDate: String) -> Date?{
         let formatter = ISO8601DateFormatter()
@@ -493,13 +546,17 @@ public class CapacitorHealthkitPlugin: CAPPlugin {
 
         let query = HKSampleQuery(sampleType: sampleType, predicate: predicate, limit: limit, sortDescriptors: nil) {
             _, results, _ in
-            guard let output: [[String: Any]] = self.generateOutput(sampleName: _sampleName, results: results) else {
-                return call.reject("Error happened while generating outputs")
+            Task { () -> Any in
+                guard let output: [[String: Any]] = await self.generateOutput(sampleName: _sampleName, results: results) else {
+                    return call.reject("Error happened while generating outputs")
+                }
+                call.resolve([
+                    "countReturn": output.count,
+                    "resultData": output,
+                ])
+                return true
             }
-            call.resolve([
-                "countReturn": output.count,
-                "resultData": output,
-            ])
+            
         }
         healthStore.execute(query)
     }
@@ -608,13 +665,20 @@ public class CapacitorHealthkitPlugin: CAPPlugin {
 
         let query = HKSampleQuery(sampleType: sampleType, predicate: predicate, limit: limit, sortDescriptors: nil) {
             _, results, _ in
-            guard let output: [[String: Any]] = self.generateOutput(sampleName: sampleName, results: results) else {
-                return completion(.failure(HKSampleError.sampleTypeFailed))
+
+            Task { () -> Any in
+                 guard let output: [[String: Any]] = await self.generateOutput(sampleName: sampleName, results: results) else {
+                    return completion(.failure(HKSampleError.sampleTypeFailed))
+                }
+                completion(.success([
+                    "countReturn": output.count,
+                    "resultData": output,
+                ]))
+                return true
             }
-            completion(.success([
-                "countReturn": output.count,
-                "resultData": output,
-            ]))
+           
+
+
         }
         healthStore.execute(query)
     }
