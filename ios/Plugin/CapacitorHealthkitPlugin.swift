@@ -63,6 +63,8 @@ public class CapacitorHealthkitPlugin: CAPPlugin {
             return HKSeriesType.workoutRoute()
         case "weight":
             return HKQuantityType.quantityType(forIdentifier: HKQuantityTypeIdentifier.bodyMass)!
+        case "heartRate":
+             return HKQuantityType.quantityType(forIdentifier: HKQuantityTypeIdentifier.heartRate)!
         default:
             return nil
         }
@@ -92,6 +94,8 @@ public class CapacitorHealthkitPlugin: CAPPlugin {
                 types.insert(HKQuantityType.quantityType(forIdentifier: HKQuantityTypeIdentifier.bloodGlucose)!)
             case "weight":
                 types.insert(HKQuantityType.quantityType(forIdentifier: HKQuantityTypeIdentifier.bodyMass)!)
+            case "heartRate":
+                 types.insert(HKQuantityType.quantityType(forIdentifier: HKQuantityTypeIdentifier.heartRate)!)
             default:
                 print("no match in case: " + item)
             }
@@ -300,6 +304,7 @@ public class CapacitorHealthkitPlugin: CAPPlugin {
                     "sleepState": sleepState,
                     "source": sample.sourceRevision.source.name,
                     "sourceBundleId": sample.sourceRevision.source.bundleIdentifier,
+                    "device": getDeviceInformation(device: sample.device),
                 ]
                 output.append(constructedSample)
             } else if sampleName == "workoutType" {
@@ -360,6 +365,7 @@ public class CapacitorHealthkitPlugin: CAPPlugin {
                     "duration": workoutHoursBetweenDates,
                     "source": sample.sourceRevision.source.name,
                     "sourceBundleId": sample.sourceRevision.source.bundleIdentifier,
+                    "device": getDeviceInformation(device: sample.device),
                     "workoutActivityId": sample.workoutActivityType.rawValue,
                     "workoutActivityName": returnWorkoutActivityTypeValueDictionnary(activityType: sample.workoutActivityType),
                     "totalEnergyBurned": TEBData!, // kilocalorie
@@ -377,7 +383,10 @@ public class CapacitorHealthkitPlugin: CAPPlugin {
                 var unit: HKUnit?
                 var unitName: String?
 
-                if sampleName == "weight" {
+                if sampleName == "heartRate" {
+                    unit = HKUnit(from: "count/min")
+                    unitName = "BPM"
+                } else if sampleName == "weight" {
                     unit = HKUnit.gramUnit(with: .kilo)
                     unitName = "kilogram"
                 } else if sample.quantityType.is(compatibleWith: HKUnit.meter()) {
@@ -417,6 +426,7 @@ public class CapacitorHealthkitPlugin: CAPPlugin {
                     "duration": quantityHoursBetweenDates,
                     "source": sample.sourceRevision.source.name,
                     "sourceBundleId": sample.sourceRevision.source.bundleIdentifier,
+                    "device": getDeviceInformation(device: sample.device),
                 ])
             }
         }
@@ -486,8 +496,21 @@ public class CapacitorHealthkitPlugin: CAPPlugin {
         return locations
     }
 
-
-    func getDateFromString(inputDate: String) -> Date?{
+  func getDeviceInformation(device: HKDevice?) -> [String: String?]? {
+        if (device == nil) {
+            return nil;
+        }
+        
+        let deviceInformation: [String: String?] = [
+            "name": device?.name,
+            "model": device?.model,
+            "manufacturer": device?.manufacturer,
+            "hardwareVersion": device?.hardwareVersion,
+            "softwareVersion": device?.softwareVersion,
+        ];
+                
+        return deviceInformation;
+    }
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions =  [.withInternetDateTime, .withFractionalSeconds]
         return formatter.date(from: inputDate)
